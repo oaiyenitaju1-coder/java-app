@@ -45,7 +45,19 @@ pipeline {
             }
         }
 
-        stage('SonarQube Analysis with Java 8') {
+        stage('Show Jenkinsfile info') {
+   	    steps {
+                sh '''
+                    pwd
+                    ls -la
+                    git rev-parse HEAD || true
+                    grep -n "sonar-maven-plugin" Jenkinsfile || true
+                    grep -n "sonar:sonar" Jenkinsfile || true
+                '''
+            }
+       }
+
+	stage('SonarQube Analysis with Java 8') {
             steps {
                 withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
                     sh '''
