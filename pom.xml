@@ -1,13 +1,12 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://www.m
-aven.apache.org/xsd/maven-4.0.0.xsd">
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.3.0</version>
+        <version>2.7.18</version>
         <relativePath/>
     </parent>
 
@@ -17,7 +16,8 @@ aven.apache.org/xsd/maven-4.0.0.xsd">
     <name>java-app</name>
 
     <properties>
-        <java.version>17</java.version>
+        <java.version>1.8</java.version>
+        <maven.compiler.release>8</maven.compiler.release>
     </properties>
 
     <dependencies>
@@ -42,3 +42,29 @@ aven.apache.org/xsd/maven-4.0.0.xsd">
         </plugins>
     </build>
 </project>
+Your Java code can stay simple
+
+Avoid Java 11+ or 17-only language features. Keep it basic.
+
+DemoApplication.java
+
+package com.example.demo;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@SpringBootApplication
+@RestController
+public class DemoApplication {
+
+    @GetMapping("/")
+    public String home() {
+        return "CI/CD Pipeline Working";
+    }
+
+    public static void main(String[] args) {
+        SpringApplication.run(DemoApplication.class, args);
+    }
+}
