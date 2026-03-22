@@ -2,10 +2,10 @@ pipeline {
     agent any
 
     environment {
-        APP_NAME        = 'java-app'
-        DOCKERHUB_USER  = 'horla1'
-        IMAGE_NAME      = "${horla1}/java-app"
-        SONAR_HOST_URL  = 'http://sonarqube:9000'
+        APP_NAME       = 'java-app'
+        DOCKERHUB_USER = 'horla1'
+        IMAGE_NAME     = "${DOCKERHUB_USER}/java-app"
+        SONAR_HOST_URL = 'http://sonarqube:9000'
     }
 
     options {
@@ -13,9 +13,27 @@ pipeline {
     }
 
     stages {
+        stage('Clean Workspace') {
+            steps {
+                deleteDir()
+            }
+        }
+
         stage('Checkout Code') {
             steps {
                 checkout scm
+            }
+        }
+
+        stage('Debug Jenkinsfile') {
+            steps {
+                sh '''
+                    echo "PWD=$(pwd)"
+                    git rev-parse HEAD || true
+                    echo "==== Jenkinsfile sonar lines ===="
+                    grep -n "sonar-maven-plugin" Jenkinsfile || true
+                    grep -n "sonar:sonar" Jenkinsfile || true
+                '''
             }
         }
 
@@ -26,7 +44,7 @@ pipeline {
                     docker cp . java17-builder:/workspace
                     docker exec java17-builder sh -lc '
                         cd /workspace &&
-                        mvn -B clean compile
+                        mvn -B clean package -DskipTests
                     '
                 '''
             }
@@ -45,31 +63,19 @@ pipeline {
             }
         }
 
-        stage('Show Jenkinsfile info') {
-   	    steps {
-                sh '''
-                    pwd
-                    ls -la
-                    git rev-parse HEAD || true
-                    grep -n "sonar-maven-plugin" Jenkinsfile || true
-                    grep -n "sonar:sonar" Jenkinsfile || true
-                '''
-            }
-       }
-
-	stage('SonarQube Analysis with Java 8') {
+        stage('SonarQube Analysis with Java 8') {
             steps {
                 withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
                     sh '''
                         docker exec java8-analyzer sh -lc 'rm -rf /workspace && mkdir -p /workspace'
                         docker cp . java8-analyzer:/workspace
-                        docker exec java8-analyzer sh -lc "
+                        docker exec java8-analyzer sh -lc '
                             cd /workspace &&
                             mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:3.10.0.2594:sonar \
                               -Dsonar.projectKey=java-app \
-                              -Dsonar.host.url=${SONAR_HOST_URL} \
-                              -Dsonar.login=${SONAR_TOKEN}
-                        "
+                              -Dsonar.host.url='"${SONAR_HOST_URL}"' \
+                              -Dsonar.login='"${SONAR_TOKEN}"'
+                        '
                     '''
                 }
             }
