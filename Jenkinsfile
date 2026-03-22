@@ -53,7 +53,7 @@ pipeline {
                         docker cp . java8-analyzer:/workspace
                         docker exec java8-analyzer sh -lc "
                             cd /workspace &&
-                            mvn -B sonar:sonar \
+                            mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:3.10.0.2594:sonar \
                               -Dsonar.projectKey=java-app \
                               -Dsonar.host.url=${SONAR_HOST_URL} \
                               -Dsonar.login=${SONAR_TOKEN}
