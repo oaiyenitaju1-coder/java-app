@@ -1,4 +1,4 @@
-package com.example.demo;
+ipackage com.example.demo;
 
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class DemoApplicationTests {
 
     @Test
-    void testApp() {
+    public void testApp() {
         assertTrue(true);
     }
 }
