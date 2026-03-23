@@ -13,27 +13,9 @@ pipeline {
     }
 
     stages {
-        stage('Clean Workspace') {
-            steps {
-                deleteDir()
-            }
-        }
-
         stage('Checkout Code') {
             steps {
                 checkout scm
-            }
-        }
-
-        stage('Debug Jenkinsfile') {
-            steps {
-                sh '''
-                    echo "PWD=$(pwd)"
-                    git rev-parse HEAD || true
-                    echo "==== Jenkinsfile sonar lines ===="
-                    grep -n "sonar-maven-plugin" Jenkinsfile || true
-                    grep -n "sonar:sonar" Jenkinsfile || true
-                '''
             }
         }
 
@@ -44,7 +26,7 @@ pipeline {
                     docker cp . java17-builder:/workspace
                     docker exec java17-builder sh -lc '
                         cd /workspace &&
-                        mvn -B clean package -DskipTests
+                        mvn -B clean compile
                     '
                 '''
             }
@@ -67,15 +49,19 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
                     sh '''
+                        echo "USING UPDATED JENKINSFILE"
+                        grep -n "sonar-maven-plugin" Jenkinsfile || true
+                        grep -n "sonar:sonar" Jenkinsfile || true
+
                         docker exec java8-analyzer sh -lc 'rm -rf /workspace && mkdir -p /workspace'
                         docker cp . java8-analyzer:/workspace
-                        docker exec java8-analyzer sh -lc '
+                        docker exec java8-analyzer sh -lc "
                             cd /workspace &&
                             mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:3.10.0.2594:sonar \
                               -Dsonar.projectKey=java-app \
-                              -Dsonar.host.url='"${SONAR_HOST_URL}"' \
-                              -Dsonar.login='"${SONAR_TOKEN}"'
-                        '
+                              -Dsonar.host.url=${SONAR_HOST_URL} \
+                              -Dsonar.login=${SONAR_TOKEN}
+                        "
                     '''
                 }
             }
