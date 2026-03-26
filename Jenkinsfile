@@ -2,20 +2,19 @@ pipeline {
     agent any
 
     environment {
-        APP_NAME       = 'java-app'
-        DOCKERHUB_USER = 'horla1'
-        IMAGE_NAME     = "${DOCKERHUB_USER}/java-app"
         SONAR_HOST_URL = 'http://sonarqube:9000'
-    }
-
-    options {
-        timestamps()
+        APP_IMAGE = 'horla1/java-app:latest'
     }
 
     stages {
-        stage('Checkout Code') {
+        stage('Checkout') {
             steps {
                 checkout scm
+                sh '''
+                    echo "CHECKOUT COMPLETE"
+                    pwd
+                    ls -la
+                '''
             }
         }
 
@@ -24,36 +23,43 @@ pipeline {
                 sh '''
                     docker exec java17-builder sh -lc 'rm -rf /workspace && mkdir -p /workspace'
                     docker cp . java17-builder:/workspace
-                    docker exec java17-builder sh -lc '
+                    docker exec java17-builder sh -lc "
                         cd /workspace &&
+                        java -version &&
                         mvn -B clean compile
-                    '
+                    "
                 '''
             }
         }
 
-        stage('Run Unit Tests with Java 11') {
+        stage('Test with Java 11') {
             steps {
                 sh '''
                     docker exec java11-tester sh -lc 'rm -rf /workspace && mkdir -p /workspace'
                     docker cp . java11-tester:/workspace
-                    docker exec java11-tester sh -lc '
+                    docker exec java11-tester sh -lc "
                         cd /workspace &&
+                        java -version &&
                         mvn -B test
-                    '
+                    "
                 '''
             }
         }
 
-        stage('SonarQube Analysis with Java 11') {
+        stage('SonarQube Analysis') {
             steps {
                 withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
                     sh '''
+                        echo "USING JAVA11 SONAR STAGE"
+                        grep -n "sonar:sonar" Jenkinsfile || true
+                        grep -n "sonar-maven-plugin" Jenkinsfile || true
+
                         docker exec java11-sonar sh -lc 'rm -rf /workspace && mkdir -p /workspace'
                         docker cp . java11-sonar:/workspace
                         docker exec java11-sonar sh -lc "
                             cd /workspace &&
-                            mvn -B sonar:sonar \
+                            java -version &&
+                            mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:4.0.0.4121:sonar \
                               -Dsonar.projectKey=java-app \
                               -Dsonar.host.url=${SONAR_HOST_URL} \
                               -Dsonar.login=${SONAR_TOKEN}
@@ -63,16 +69,16 @@ pipeline {
             }
         }
 
-        stage('Package Application') {
+        stage('Package') {
             steps {
                 sh '''
                     docker exec java17-builder sh -lc 'rm -rf /workspace && mkdir -p /workspace'
                     docker cp . java17-builder:/workspace
-                    docker exec java17-builder sh -lc '
+                    docker exec java17-builder sh -lc "
                         cd /workspace &&
                         mvn -B clean package -DskipTests
-                    '
-                    docker cp java17-builder:/workspace/target ./target
+                    "
+                    docker cp java17-builder:/workspace/target .
                 '''
             }
         }
@@ -80,7 +86,7 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 sh '''
-                    docker build -t ${IMAGE_NAME}:${BUILD_NUMBER} -t ${IMAGE_NAME}:latest .
+                    docker build -t ${APP_IMAGE} .
                 '''
             }
         }
@@ -90,36 +96,36 @@ pipeline {
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh '''
                         echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin
-                        docker push ${IMAGE_NAME}:${BUILD_NUMBER}
-                        docker push ${IMAGE_NAME}:latest
+                        docker push ${APP_IMAGE}
                     '''
                 }
             }
         }
 
-        stage('Deploy to Kubernetes') {
+        stage('Deploy App Container') {
             steps {
                 sh '''
-                    sed "s|YOUR_DOCKER_HUB_USERNAME/java-app:latest|${IMAGE_NAME}:${BUILD_NUMBER}|g" deployment.yaml > deployment.rendered.yaml
-                    kubectl apply -f deployment.rendered.yaml
-                    kubectl rollout status deployment/java-app
-                    kubectl get pods
-                    kubectl get svc
+                    docker rm -f java-app-test || true
+                    docker run -d --name java-app-test -p 8081:8080 ${APP_IMAGE}
                 '''
             }
         }
     }
 
     post {
-        success {
-            echo 'Pipeline completed successfully.'
-        }
-        failure {
-            echo 'Pipeline failed.'
-        }
         always {
             sh '''
-                docker logout || true
+                echo "Pipeline finished"
+            '''
+        }
+        success {
+            sh '''
+                echo "Pipeline completed successfully"
+            '''
+        }
+        failure {
+            sh '''
+                echo "Pipeline failed"
             '''
         }
     }
