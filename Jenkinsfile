@@ -2,64 +2,50 @@ pipeline {
     agent any
 
     environment {
-        SONAR_HOST_URL = 'http://sonarqube:9000'
-        APP_IMAGE = 'horla1/java-app:latest'
+        IMAGE_NAME = "horla1/java-app"
+        SONAR_HOST_URL = "http://sonarqube:9000"
     }
 
     stages {
-        stage('Checkout') {
+
+        stage('Checkout Code') {
             steps {
-                checkout scm
-                sh '''
-                    echo "CHECKOUT COMPLETE"
-                    pwd
-                    ls -la
-                '''
+                git branch: 'main', url: 'https://github.com/oaiyenitaju1-coder/java-app.git'
             }
         }
 
-        stage('Build with Java 17') {
+        stage('Build with Maven (Java 11)') {
             steps {
                 sh '''
-                    docker exec java17-builder sh -lc 'rm -rf /workspace && mkdir -p /workspace'
-                    docker cp . java17-builder:/workspace
-                    docker exec java17-builder sh -lc "
-                        cd /workspace &&
-                        java -version &&
-                        mvn -B clean compile
-                    "
-                '''
-            }
-        }
+                    docker exec java11-tester sh -lc '
+                        rm -rf /workspace &&
+                        mkdir -p /workspace
+                    '
 
-        stage('Test with Java 11') {
-            steps {
-                sh '''
-                    docker exec java11-tester sh -lc 'rm -rf /workspace && mkdir -p /workspace'
                     docker cp . java11-tester:/workspace
-                    docker exec java11-tester sh -lc "
+
+                    docker exec java11-tester sh -lc '
                         cd /workspace &&
-                        java -version &&
-                        mvn -B test
-                    "
+                        mvn -B clean test
+                    '
                 '''
             }
         }
 
-        stage('SonarQube Analysis') {
+        stage('SonarQube Analysis (Java 11)') {
             steps {
                 withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
                     sh '''
-                        echo "USING JAVA11 SONAR STAGE"
-                        grep -n "sonar:sonar" Jenkinsfile || true
-                        grep -n "sonar-maven-plugin" Jenkinsfile || true
+                        docker exec java11-sonar sh -lc '
+                            rm -rf /workspace &&
+                            mkdir -p /workspace
+                        '
 
-                        docker exec java11-sonar sh -lc 'rm -rf /workspace && mkdir -p /workspace'
                         docker cp . java11-sonar:/workspace
+
                         docker exec java11-sonar sh -lc "
                             cd /workspace &&
-                            java -version &&
-                            mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:4.0.0.4121:sonar \
+                            mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:3.10.0.2594:sonar \
                               -Dsonar.projectKey=java-app \
                               -Dsonar.host.url=${SONAR_HOST_URL} \
                               -Dsonar.login=${SONAR_TOKEN}
@@ -69,24 +55,10 @@ pipeline {
             }
         }
 
-        stage('Package') {
-            steps {
-                sh '''
-                    docker exec java17-builder sh -lc 'rm -rf /workspace && mkdir -p /workspace'
-                    docker cp . java17-builder:/workspace
-                    docker exec java17-builder sh -lc "
-                        cd /workspace &&
-                        mvn -B clean package -DskipTests
-                    "
-                    docker cp java17-builder:/workspace/target .
-                '''
-            }
-        }
-
         stage('Build Docker Image') {
             steps {
                 sh '''
-                    docker build -t ${APP_IMAGE} .
+                    docker build -t ${IMAGE_NAME}:${BUILD_NUMBER} -t ${IMAGE_NAME}:latest .
                 '''
             }
         }
@@ -96,37 +68,36 @@ pipeline {
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh '''
                         echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin
-                        docker push ${APP_IMAGE}
+                        docker push ${IMAGE_NAME}:${BUILD_NUMBER}
+                        docker push ${IMAGE_NAME}:latest
                     '''
                 }
             }
         }
 
-        stage('Deploy App Container') {
+        stage('Deploy to Kubernetes') {
             steps {
                 sh '''
-                    docker rm -f java-app-test || true
-                    docker run -d --name java-app-test -p 8081:8080 ${APP_IMAGE}
+                    kubectl apply -f deployment.yaml
+
+                    kubectl set image deployment/java-app \
+                        java-app=${IMAGE_NAME}:${BUILD_NUMBER} --record
+
+                    kubectl rollout status deployment/java-app
+
+                    kubectl get pods
+                    kubectl get svc
                 '''
             }
         }
     }
 
     post {
-        always {
-            sh '''
-                echo "Pipeline finished"
-            '''
-        }
         success {
-            sh '''
-                echo "Pipeline completed successfully"
-            '''
+            echo '✅ Pipeline completed successfully!'
         }
         failure {
-            sh '''
-                echo "Pipeline failed"
-            '''
+            echo '❌ Pipeline failed!'
         }
     }
 }
