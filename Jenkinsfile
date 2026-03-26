@@ -45,25 +45,35 @@ pipeline {
             }
         }
 
-        stage('SonarQube Analysis with Java 8') {
+        stage('SonarQube Analysis with Java 11') {
             steps {
                 withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
                     sh '''
-                        echo "USING UPDATED JENKINSFILE"
-                        grep -n "sonar-maven-plugin" Jenkinsfile || true
-                        grep -n "sonar:sonar" Jenkinsfile || true
-
-                        docker exec java8-analyzer sh -lc 'rm -rf /workspace && mkdir -p /workspace'
-                        docker cp . java8-analyzer:/workspace
-                        docker exec java8-analyzer sh -lc "
+                        docker exec java11-sonar sh -lc 'rm -rf /workspace && mkdir -p /workspace'
+                        docker cp . java11-sonar:/workspace
+                        docker exec java11-sonar sh -lc "
                             cd /workspace &&
-                            mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:3.10.0.2594:sonar \
+                            mvn -B sonar:sonar \
                               -Dsonar.projectKey=java-app \
                               -Dsonar.host.url=${SONAR_HOST_URL} \
                               -Dsonar.login=${SONAR_TOKEN}
                         "
                     '''
                 }
+            }
+        }
+
+        stage('Package Application') {
+            steps {
+                sh '''
+                    docker exec java17-builder sh -lc 'rm -rf /workspace && mkdir -p /workspace'
+                    docker cp . java17-builder:/workspace
+                    docker exec java17-builder sh -lc '
+                        cd /workspace &&
+                        mvn -B clean package -DskipTests
+                    '
+                    docker cp java17-builder:/workspace/target ./target
+                '''
             }
         }
 
