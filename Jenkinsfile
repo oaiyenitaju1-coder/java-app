@@ -2,12 +2,11 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = "horla1/java-app"
-        SONAR_HOST_URL = "http://sonarqube:9000"
+        IMAGE_NAME = 'horla1/java-app'
+        SONAR_HOST_URL = 'http://sonarqube:9000'
     }
 
     stages {
-
         stage('Checkout Code') {
             steps {
                 git branch: 'main', url: 'https://github.com/oaiyenitaju1-coder/java-app.git'
@@ -45,7 +44,7 @@ pipeline {
 
                         docker exec java11-sonar sh -lc "
                             cd /workspace &&
-                            mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:3.10.0.2594:sonar \
+                            mvn -B clean verify sonar:sonar \
                               -Dsonar.projectKey=java-app \
                               -Dsonar.host.url=${SONAR_HOST_URL} \
                               -Dsonar.login=${SONAR_TOKEN}
@@ -77,17 +76,27 @@ pipeline {
 
         stage('Deploy to Kubernetes') {
             steps {
-                sh '''
-                    kubectl apply -f deployment.yaml
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG_FILE')]) {
+                    sh '''
+                        export KUBECONFIG="$KUBECONFIG_FILE"
 
-                    kubectl set image deployment/java-app \
-                        java-app=${IMAGE_NAME}:${BUILD_NUMBER} --record
+                        echo "Current context:"
+                        kubectl config current-context
 
-                    kubectl rollout status deployment/java-app
+                        echo "Checking cluster access..."
+                        kubectl get nodes
 
-                    kubectl get pods
-                    kubectl get svc
-                '''
+                        kubectl apply -f deployment.yaml
+
+                        kubectl set image deployment/java-app \
+                            java-app=${IMAGE_NAME}:${BUILD_NUMBER}
+
+                        kubectl rollout status deployment/java-app
+
+                        kubectl get pods
+                        kubectl get svc
+                    '''
+                }
             }
         }
     }
