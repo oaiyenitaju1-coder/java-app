@@ -56,6 +56,7 @@ pipeline {
     environment {
         IMAGE_NAME     = 'horla1/java-app'
         SONAR_HOST_URL = 'http://192.168.49.4:9000'
+        GIT_REPO       = 'https://github.com/oaiyenitaju1-coder/java-app.git'
     }
 
     stages {
@@ -153,7 +154,27 @@ pipeline {
             }
         }
 
-        stage('Deploy to Kubernetes') {
+        stage('Update GitOps Repo') {
+            steps {
+                withCredentials([usernamePassword(
+                        credentialsId: 'github-creds',
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_TOKEN')]) {
+                    sh """
+                        git config user.email "jenkins@ci.local"
+                        git config user.name "Jenkins"
+
+                        sed -i 's|tag:.*|tag: "${BUILD_NUMBER}"|' gitops/values.yaml
+
+                        git add gitops/values.yaml
+                        git commit -m "ci: update image tag to ${BUILD_NUMBER} [skip ci]"
+                        git push https://${GIT_USER}:${GIT_TOKEN}@github.com/oaiyenitaju1-coder/java-app.git main
+                    """
+                }
+            }
+        }
+
+        stage('Verify Argo CD Sync') {
             steps {
                 container('helm') {
                     withCredentials([file(credentialsId: 'kubeconfig',
@@ -161,21 +182,11 @@ pipeline {
                         sh """
                             export KUBECONFIG="\$KUBECONFIG_FILE"
 
-                            echo "Current context:"
-                            kubectl config current-context
-
-                            echo "Checking cluster access..."
-                            kubectl get nodes
-
-                            echo "Deploying with Helm..."
-                            helm upgrade --install java-app ./helm/java-app \
-                              --set image.repository=${IMAGE_NAME} \
-                              --set image.tag=${BUILD_NUMBER} \
-                              --wait \
-                              --timeout 2m
+                            echo "Waiting for Argo CD to sync..."
+                            sleep 30
 
                             echo "Deployment status:"
-                            kubectl rollout status deployment/java-app
+                            kubectl rollout status deployment/java-app --timeout=2m
 
                             kubectl get pods
                             kubectl get svc
