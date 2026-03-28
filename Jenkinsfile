@@ -74,6 +74,10 @@ pipeline {
             }
         }
 
+        // ── REPLACED STAGE ─────────────────────────────────────────────────────
+        // Previously used: kubectl apply -f deployment.yaml + kubectl set image
+        // Now uses:        helm upgrade --install with image tag passed at runtime
+        // ───────────────────────────────────────────────────────────────────────
         stage('Deploy to Kubernetes') {
             steps {
                 withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG_FILE')]) {
@@ -86,11 +90,14 @@ pipeline {
                         echo "Checking cluster access..."
                         kubectl get nodes
 
-                        kubectl apply -f deployment.yaml
+                        echo "Deploying with Helm..."
+                        helm upgrade --install java-app ./helm/java-app \
+                            --set image.repository=${IMAGE_NAME} \
+                            --set image.tag=${BUILD_NUMBER} \
+                            --wait \
+                            --timeout 2m
 
-                        kubectl set image deployment/java-app \
-                            java-app=${IMAGE_NAME}:${BUILD_NUMBER}
-
+                        echo "Deployment status:"
                         kubectl rollout status deployment/java-app
 
                         kubectl get pods
