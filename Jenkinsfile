@@ -26,6 +26,14 @@ pipeline {
                     - name: docker-sock
                       mountPath: /var/run/docker.sock
 
+                  - name: trivy
+                    image: aquasec/trivy:latest
+                    command: [sleep]
+                    args: [infinity]
+                    volumeMounts:
+                    - name: docker-sock
+                      mountPath: /var/run/docker.sock
+
                   - name: helm
                     image: dtzar/helm-kubectl:3.14
                     command: [sleep]
@@ -109,6 +117,38 @@ pipeline {
                             docker push ${IMAGE_NAME}:latest
                         """
                     }
+                }
+            }
+        }
+
+        stage('Trivy Security Scan') {
+            steps {
+                container('trivy') {
+                    sh """
+                        trivy image \
+                          --exit-code 0 \
+                          --severity HIGH,CRITICAL \
+                          --format table \
+                          --no-progress \
+                          ${IMAGE_NAME}:${BUILD_NUMBER}
+
+                        trivy image \
+                          --exit-code 1 \
+                          --severity CRITICAL \
+                          --format json \
+                          --output trivy-report.json \
+                          --no-progress \
+                          ${IMAGE_NAME}:${BUILD_NUMBER}
+                    """
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'trivy-report.json',
+                                     allowEmptyArchive: true
+                }
+                failure {
+                    echo '❌ Trivy found CRITICAL vulnerabilities — deploy blocked!'
                 }
             }
         }
