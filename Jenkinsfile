@@ -27,7 +27,7 @@ pipeline {
                       mountPath: /var/run/docker.sock
 
                   - name: trivy
-                    image: aquasec/trivy:latest
+                    image: aquasec/trivy:0.51.1
                     command: [sleep]
                     args: [infinity]
                     volumeMounts:
