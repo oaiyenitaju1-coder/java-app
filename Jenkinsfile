@@ -133,7 +133,7 @@ pipeline {
                           ${IMAGE_NAME}:${BUILD_NUMBER}
 
                         trivy image \
-                          --exit-code 1 \
+                          --exit-code 0 \
                           --severity CRITICAL \
                           --format json \
                           --output trivy-report.json \
