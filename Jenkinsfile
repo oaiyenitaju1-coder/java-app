@@ -27,7 +27,7 @@ pipeline {
                       mountPath: /var/run/docker.sock
 
                   - name: helm
-                    image: alpine/helm:3.14.0
+                    image: dtzar/helm-kubectl:3.14
                     command: [sleep]
                     args: [infinity]
                     volumeMounts:
@@ -46,7 +46,7 @@ pipeline {
     }
 
     environment {
-        IMAGE_NAME    = 'horla1/java-app'
+        IMAGE_NAME     = 'horla1/java-app'
         SONAR_HOST_URL = 'http://192.168.49.4:9000'
     }
 
@@ -59,10 +59,6 @@ pipeline {
             }
         }
 
-        // ── BUILD & TEST ────────────────────────────────────────────────────────
-        // Previously: docker exec java11-tester sh -lc 'mvn -B clean test'
-        // Now:        runs directly inside the maven container in the agent pod
-        // ────────────────────────────────────────────────────────────────────────
         stage('Build with Maven (Java 11)') {
             steps {
                 container('maven') {
@@ -71,11 +67,6 @@ pipeline {
             }
         }
 
-        // ── SONARQUBE ───────────────────────────────────────────────────────────
-        // Previously: docker exec java11-sonar sh -lc 'mvn ... sonar:sonar'
-        // Now:        same maven container, sonarqube:9000 reachable via Docker
-        //             network — no container name change needed
-        // ────────────────────────────────────────────────────────────────────────
         stage('SonarQube Analysis (Java 11)') {
             steps {
                 container('maven') {
@@ -92,11 +83,6 @@ pipeline {
             }
         }
 
-        // ── DOCKER BUILD ────────────────────────────────────────────────────────
-        // Previously: sh 'docker build ...' on Jenkins controller
-        // Now:        runs inside the docker container in the agent pod,
-        //             which shares /var/run/docker.sock from the host
-        // ────────────────────────────────────────────────────────────────────────
         stage('Build Docker Image') {
             steps {
                 container('docker') {
@@ -109,7 +95,6 @@ pipeline {
             }
         }
 
-        // ── DOCKER PUSH ─────────────────────────────────────────────────────────
         stage('Push Docker Image') {
             steps {
                 container('docker') {
@@ -128,10 +113,6 @@ pipeline {
             }
         }
 
-        // ── DEPLOY ──────────────────────────────────────────────────────────────
-        // Unchanged from Phase 1 — helm upgrade --install via kubeconfig secret
-        // Runs in the dedicated helm container (has kubectl + helm pre-installed)
-        // ────────────────────────────────────────────────────────────────────────
         stage('Deploy to Kubernetes') {
             steps {
                 container('helm') {
