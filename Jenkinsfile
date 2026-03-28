@@ -47,7 +47,7 @@ pipeline {
 
     environment {
         IMAGE_NAME    = 'horla1/java-app'
-        SONAR_HOST_URL = 'http://sonarqube:9000'
+        SONAR_HOST_URL = 'http://192.168.49.4:9000'
     }
 
     stages {
@@ -174,4 +174,3 @@ pipeline {
         }
     }
 }
-
