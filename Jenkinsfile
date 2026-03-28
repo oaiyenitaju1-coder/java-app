@@ -14,6 +14,16 @@ pipeline {
                     image: maven:3.9-eclipse-temurin-11
                     command: [sleep]
                     args: [infinity]
+                    env:
+                    - name: MAVEN_OPTS
+                      value: "-Xmx512m -Xms256m"
+                    resources:
+                      requests:
+                        memory: "512Mi"
+                        cpu: "250m"
+                      limits:
+                        memory: "768Mi"
+                        cpu: "500m"
                     volumeMounts:
                     - name: m2-cache
                       mountPath: /root/.m2
@@ -22,6 +32,13 @@ pipeline {
                     image: docker:24-cli
                     command: [sleep]
                     args: [infinity]
+                    resources:
+                      requests:
+                        memory: "128Mi"
+                        cpu: "100m"
+                      limits:
+                        memory: "256Mi"
+                        cpu: "200m"
                     volumeMounts:
                     - name: docker-sock
                       mountPath: /var/run/docker.sock
@@ -30,6 +47,13 @@ pipeline {
                     image: aquasec/trivy:0.51.1
                     command: [sleep]
                     args: [infinity]
+                    resources:
+                      requests:
+                        memory: "128Mi"
+                        cpu: "100m"
+                      limits:
+                        memory: "256Mi"
+                        cpu: "200m"
                     volumeMounts:
                     - name: docker-sock
                       mountPath: /var/run/docker.sock
@@ -38,6 +62,13 @@ pipeline {
                     image: dtzar/helm-kubectl:3.14
                     command: [sleep]
                     args: [infinity]
+                    resources:
+                      requests:
+                        memory: "128Mi"
+                        cpu: "100m"
+                      limits:
+                        memory: "256Mi"
+                        cpu: "200m"
                     volumeMounts:
                     - name: docker-sock
                       mountPath: /var/run/docker.sock
@@ -206,3 +237,4 @@ pipeline {
         }
     }
 }
+
