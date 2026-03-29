@@ -1,4 +1,4 @@
-pipeline {
+groovypipeline {
     agent {
         kubernetes {
             yaml '''
@@ -49,10 +49,10 @@ pipeline {
                     args: [infinity]
                     resources:
                       requests:
-                        memory: "128Mi"
+                        memory: "256Mi"
                         cpu: "100m"
                       limits:
-                        memory: "256Mi"
+                        memory: "512Mi"
                         cpu: "200m"
                     volumeMounts:
                     - name: docker-sock
@@ -162,7 +162,6 @@ pipeline {
                           --severity HIGH,CRITICAL \
                           --format table \
                           --no-progress \
-                          --skip-java-db-update \
                           --scanners vuln \
                           ${IMAGE_NAME}:${BUILD_NUMBER}
 
@@ -172,7 +171,6 @@ pipeline {
                           --format json \
                           --output trivy-report.json \
                           --no-progress \
-                          --skip-java-db-update \
                           --scanners vuln \
                           ${IMAGE_NAME}:${BUILD_NUMBER}
                     """
