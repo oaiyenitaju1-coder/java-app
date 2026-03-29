@@ -174,31 +174,33 @@ pipeline {
                           sleep 10
                         done
 
-                        echo "Running Trivy report scan (OS packages only)..."
+                        echo "Running Trivy report scan (OS vulnerabilities only)..."
                         trivy image \
                           --cache-dir "${TRIVY_CACHE_DIR}" \
                           --timeout "${TRIVY_TIMEOUT}" \
                           --skip-db-update \
+                          --skip-java-db-update \
+                          --vuln-type os \
                           --exit-code 0 \
                           --severity HIGH,CRITICAL \
                           --format table \
                           --no-progress \
                           --scanners vuln \
-                          --pkg-types os \
                           ${IMAGE_NAME}:${BUILD_NUMBER}
 
-                        echo "Running Trivy CRITICAL gate (OS packages only)..."
+                        echo "Running Trivy CRITICAL gate (OS vulnerabilities only)..."
                         trivy image \
                           --cache-dir "${TRIVY_CACHE_DIR}" \
                           --timeout "${TRIVY_TIMEOUT}" \
                           --skip-db-update \
+                          --skip-java-db-update \
+                          --vuln-type os \
                           --exit-code 1 \
                           --severity CRITICAL \
                           --format json \
                           --output trivy-report.json \
                           --no-progress \
                           --scanners vuln \
-                          --pkg-types os \
                           ${IMAGE_NAME}:${BUILD_NUMBER}
                     '''
                 }
