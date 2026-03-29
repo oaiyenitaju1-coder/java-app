@@ -1,4 +1,4 @@
-groovypipeline {
+pipeline {
     agent {
         kubernetes {
             yaml '''
