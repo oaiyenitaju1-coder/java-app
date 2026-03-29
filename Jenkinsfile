@@ -57,6 +57,8 @@ pipeline {
                     volumeMounts:
                     - name: docker-sock
                       mountPath: /var/run/docker.sock
+                    - name: trivy-cache
+                      mountPath: /root/.cache/trivy
 
                   - name: helm
                     image: dtzar/helm-kubectl:3.14
@@ -69,9 +71,6 @@ pipeline {
                       limits:
                         memory: "256Mi"
                         cpu: "200m"
-                    volumeMounts:
-                    - name: docker-sock
-                      mountPath: /var/run/docker.sock
 
                   volumes:
                   - name: m2-cache
@@ -79,6 +78,8 @@ pipeline {
                   - name: docker-sock
                     hostPath:
                       path: /var/run/docker.sock
+                  - name: trivy-cache
+                    emptyDir: {}
             '''
             defaultContainer 'maven'
         }
@@ -94,8 +95,7 @@ pipeline {
 
         stage('Checkout Code') {
             steps {
-                git branch: 'main',
-                    url: 'https://github.com/oaiyenitaju1-coder/java-app.git'
+                git branch: 'main', url: "${GIT_REPO}"
             }
         }
 
@@ -110,14 +110,13 @@ pipeline {
         stage('SonarQube Analysis (Java 11)') {
             steps {
                 container('maven') {
-                    withCredentials([string(credentialsId: 'sonar-token',
-                                           variable: 'SONAR_TOKEN')]) {
-                        sh """
-                            mvn -B clean verify sonar:sonar \
+                    withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                        sh '''
+                            mvn -B verify org.sonarsource.scanner.maven:sonar-maven-plugin:4.0.0.4121:sonar \
                               -Dsonar.projectKey=java-app \
                               -Dsonar.host.url=${SONAR_HOST_URL} \
                               -Dsonar.login=${SONAR_TOKEN}
-                        """
+                        '''
                     }
                 }
             }
@@ -126,11 +125,11 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 container('docker') {
-                    sh """
+                    sh '''
                         docker build \
                           -t ${IMAGE_NAME}:${BUILD_NUMBER} \
                           -t ${IMAGE_NAME}:latest .
-                    """
+                    '''
                 }
             }
         }
@@ -139,15 +138,14 @@ pipeline {
             steps {
                 container('docker') {
                     withCredentials([usernamePassword(
-                            credentialsId: 'dockerhub-creds',
-                            usernameVariable: 'DOCKER_USER',
-                            passwordVariable: 'DOCKER_PASS')]) {
-                        sh """
-                            echo "${DOCKER_PASS}" | \
-                              docker login -u "${DOCKER_USER}" --password-stdin
+                        credentialsId: 'dockerhub-creds',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS')]) {
+                        sh '''
+                            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
                             docker push ${IMAGE_NAME}:${BUILD_NUMBER}
                             docker push ${IMAGE_NAME}:latest
-                        """
+                        '''
                     }
                 }
             }
@@ -156,8 +154,13 @@ pipeline {
         stage('Trivy Security Scan') {
             steps {
                 container('trivy') {
-                    sh """
+                    sh '''
+                        trivy image --download-db-only
+                        trivy image --download-java-db-only
+
                         trivy image \
+                          --skip-db-update \
+                          --skip-java-db-update \
                           --exit-code 0 \
                           --severity HIGH,CRITICAL \
                           --format table \
@@ -166,23 +169,24 @@ pipeline {
                           ${IMAGE_NAME}:${BUILD_NUMBER}
 
                         trivy image \
-                          --exit-code 0 \
+                          --skip-db-update \
+                          --skip-java-db-update \
+                          --exit-code 1 \
                           --severity CRITICAL \
                           --format json \
                           --output trivy-report.json \
                           --no-progress \
                           --scanners vuln \
                           ${IMAGE_NAME}:${BUILD_NUMBER}
-                    """
+                    '''
                 }
             }
             post {
                 always {
-                    archiveArtifacts artifacts: 'trivy-report.json',
-                                     allowEmptyArchive: true
+                    archiveArtifacts artifacts: 'trivy-report.json', allowEmptyArchive: true
                 }
                 failure {
-                    echo '❌ Trivy found CRITICAL vulnerabilities — deploy blocked!'
+                    echo '❌ Trivy detected CRITICAL vulnerabilities or scan failure — deploy blocked!'
                 }
             }
         }
@@ -190,19 +194,19 @@ pipeline {
         stage('Update GitOps Repo') {
             steps {
                 withCredentials([usernamePassword(
-                        credentialsId: 'github-creds',
-                        usernameVariable: 'GIT_USER',
-                        passwordVariable: 'GIT_TOKEN')]) {
-                    sh """
+                    credentialsId: 'github-creds',
+                    usernameVariable: 'GIT_USER',
+                    passwordVariable: 'GIT_TOKEN')]) {
+                    sh '''
                         git config user.email "jenkins@ci.local"
                         git config user.name "Jenkins"
 
-                        sed -i 's|tag:.*|tag: "${BUILD_NUMBER}"|' gitops/values.yaml
+                        sed -i 's|tag:.*|tag: "'"${BUILD_NUMBER}"'"|' gitops/values.yaml
 
                         git add gitops/values.yaml
-                        git commit -m "ci: update image tag to ${BUILD_NUMBER} [skip ci]"
-                        git push https://${GIT_USER}:${GIT_TOKEN}@github.com/oaiyenitaju1-coder/java-app.git main
-                    """
+                        git commit -m "ci: update image tag to ${BUILD_NUMBER} [skip ci]" || true
+                        git push https://$GIT_USER:$GIT_TOKEN@github.com/oaiyenitaju1-coder/java-app.git main
+                    '''
                 }
             }
         }
@@ -210,20 +214,18 @@ pipeline {
         stage('Verify Argo CD Sync') {
             steps {
                 container('helm') {
-                    withCredentials([file(credentialsId: 'kubeconfig',
-                                         variable: 'KUBECONFIG_FILE')]) {
-                        sh """
-                            export KUBECONFIG="\$KUBECONFIG_FILE"
+                    withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG_FILE')]) {
+                        sh '''
+                            export KUBECONFIG="$KUBECONFIG_FILE"
 
                             echo "Waiting for Argo CD to sync..."
                             sleep 30
 
                             echo "Deployment status:"
                             kubectl rollout status deployment/java-app --timeout=2m
-
                             kubectl get pods
                             kubectl get svc
-                        """
+                        '''
                     }
                 }
             }
