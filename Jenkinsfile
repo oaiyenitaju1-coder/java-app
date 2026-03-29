@@ -86,9 +86,11 @@ pipeline {
     }
 
     environment {
-        IMAGE_NAME     = 'horla1/java-app'
-        SONAR_HOST_URL = 'http://192.168.49.4:9000'
-        GIT_REPO       = 'https://github.com/oaiyenitaju1-coder/java-app.git'
+        IMAGE_NAME      = 'horla1/java-app'
+        SONAR_HOST_URL  = 'http://192.168.49.4:9000'
+        GIT_REPO        = 'https://github.com/oaiyenitaju1-coder/java-app.git'
+        TRIVY_CACHE_DIR = '/root/.cache/trivy'
+        TRIVY_TIMEOUT   = '15m'
     }
 
     stages {
@@ -155,10 +157,39 @@ pipeline {
             steps {
                 container('trivy') {
                     sh '''
-                        trivy image --download-db-only
-                        trivy image --download-java-db-only
+                        set -eu
 
+                        mkdir -p "${TRIVY_CACHE_DIR}"
+
+                        echo "Downloading Trivy DBs..."
+                        n=0
+                        until [ "$n" -ge 3 ]
+                        do
+                          trivy image \
+                            --cache-dir "${TRIVY_CACHE_DIR}" \
+                            --timeout "${TRIVY_TIMEOUT}" \
+                            --download-db-only && break
+                          n=$((n+1))
+                          echo "Retrying Trivy vulnerability DB download ($n/3)..."
+                          sleep 10
+                        done
+
+                        n=0
+                        until [ "$n" -ge 3 ]
+                        do
+                          trivy image \
+                            --cache-dir "${TRIVY_CACHE_DIR}" \
+                            --timeout "${TRIVY_TIMEOUT}" \
+                            --download-java-db-only && break
+                          n=$((n+1))
+                          echo "Retrying Trivy Java DB download ($n/3)..."
+                          sleep 10
+                        done
+
+                        echo "Running Trivy report scan..."
                         trivy image \
+                          --cache-dir "${TRIVY_CACHE_DIR}" \
+                          --timeout "${TRIVY_TIMEOUT}" \
                           --skip-db-update \
                           --skip-java-db-update \
                           --exit-code 0 \
@@ -168,7 +199,10 @@ pipeline {
                           --scanners vuln \
                           ${IMAGE_NAME}:${BUILD_NUMBER}
 
+                        echo "Running Trivy CRITICAL gate..."
                         trivy image \
+                          --cache-dir "${TRIVY_CACHE_DIR}" \
+                          --timeout "${TRIVY_TIMEOUT}" \
                           --skip-db-update \
                           --skip-java-db-update \
                           --exit-code 1 \
@@ -186,7 +220,7 @@ pipeline {
                     archiveArtifacts artifacts: 'trivy-report.json', allowEmptyArchive: true
                 }
                 failure {
-                    echo '❌ Trivy detected CRITICAL vulnerabilities or scan failure — deploy blocked!'
+                    echo '❌ Trivy scan failed or CRITICAL vulnerabilities were found — deploy blocked!'
                 }
             }
         }
