@@ -162,6 +162,8 @@ pipeline {
                           --severity HIGH,CRITICAL \
                           --format table \
                           --no-progress \
+                          --skip-java-db-update \
+                          --scanners vuln \
                           ${IMAGE_NAME}:${BUILD_NUMBER}
 
                         trivy image \
@@ -170,6 +172,8 @@ pipeline {
                           --format json \
                           --output trivy-report.json \
                           --no-progress \
+                          --skip-java-db-update \
+                          --scanners vuln \
                           ${IMAGE_NAME}:${BUILD_NUMBER}
                     """
                 }
@@ -237,4 +241,3 @@ pipeline {
         }
     }
 }
-
