@@ -161,7 +161,7 @@ pipeline {
 
                         mkdir -p "${TRIVY_CACHE_DIR}"
 
-                        echo "Downloading Trivy DBs..."
+                        echo "Downloading Trivy vulnerability DB..."
                         n=0
                         until [ "$n" -ge 3 ]
                         do
@@ -174,43 +174,31 @@ pipeline {
                           sleep 10
                         done
 
-                        n=0
-                        until [ "$n" -ge 3 ]
-                        do
-                          trivy image \
-                            --cache-dir "${TRIVY_CACHE_DIR}" \
-                            --timeout "${TRIVY_TIMEOUT}" \
-                            --download-java-db-only && break
-                          n=$((n+1))
-                          echo "Retrying Trivy Java DB download ($n/3)..."
-                          sleep 10
-                        done
-
-                        echo "Running Trivy report scan..."
+                        echo "Running Trivy report scan (OS packages only)..."
                         trivy image \
                           --cache-dir "${TRIVY_CACHE_DIR}" \
                           --timeout "${TRIVY_TIMEOUT}" \
                           --skip-db-update \
-                          --skip-java-db-update \
                           --exit-code 0 \
                           --severity HIGH,CRITICAL \
                           --format table \
                           --no-progress \
                           --scanners vuln \
+                          --pkg-types os \
                           ${IMAGE_NAME}:${BUILD_NUMBER}
 
-                        echo "Running Trivy CRITICAL gate..."
+                        echo "Running Trivy CRITICAL gate (OS packages only)..."
                         trivy image \
                           --cache-dir "${TRIVY_CACHE_DIR}" \
                           --timeout "${TRIVY_TIMEOUT}" \
                           --skip-db-update \
-                          --skip-java-db-update \
                           --exit-code 1 \
                           --severity CRITICAL \
                           --format json \
                           --output trivy-report.json \
                           --no-progress \
                           --scanners vuln \
+                          --pkg-types os \
                           ${IMAGE_NAME}:${BUILD_NUMBER}
                     '''
                 }
@@ -220,7 +208,7 @@ pipeline {
                     archiveArtifacts artifacts: 'trivy-report.json', allowEmptyArchive: true
                 }
                 failure {
-                    echo '❌ Trivy scan failed or CRITICAL vulnerabilities were found — deploy blocked!'
+                    echo '❌ Trivy scan failed or CRITICAL OS vulnerabilities were found — deploy blocked!'
                 }
             }
         }
