@@ -20,6 +20,7 @@ spec:
       volumeMounts:
         - name: docker-sock
           mountPath: /var/run/docker.sock
+
     - name: docker
       image: docker:27.0.3-cli
       command:
@@ -28,6 +29,7 @@ spec:
       volumeMounts:
         - name: docker-sock
           mountPath: /var/run/docker.sock
+
     - name: trivy
       image: aquasec/trivy:0.57.1
       command:
@@ -38,6 +40,15 @@ spec:
       volumeMounts:
         - name: docker-sock
           mountPath: /var/run/docker.sock
+
+    - name: git
+      image: alpine/git:2.45.2
+      command:
+        - sh
+        - -c
+        - cat
+      tty: true
+
     - name: argocd
       image: argoproj/argocd:v2.12.6
       command:
@@ -45,6 +56,7 @@ spec:
         - -c
         - cat
       tty: true
+
   volumes:
     - name: docker-sock
       hostPath:
@@ -62,6 +74,9 @@ spec:
         ARGOCD_SERVER     = '192.168.49.4:8080'
         ARGOCD_APP        = 'java-app'
         WORK_DIR          = '/home/jenkins/agent/workspace/ola-cicd'
+        GITOPS_FILE       = 'gitops/values.yaml'
+        GIT_BRANCH        = 'main'
+        GIT_REPO_URL      = 'github.com/horla1/ola-cicd.git'
     }
 
     options {
@@ -75,7 +90,11 @@ spec:
         stage('Checkout') {
             steps {
                 checkout scm
-                sh 'pwd && ls -la'
+                sh '''
+                    set -eu
+                    pwd
+                    ls -la
+                '''
             }
         }
 
@@ -105,9 +124,9 @@ spec:
                             set -eu
                             cd "$WORK_DIR"
                             mvn sonar:sonar \
-                              -Dsonar.projectKey=$SONAR_PROJECT_KEY \
-                              -Dsonar.host.url=$SONAR_HOST_URL \
-                              -Dsonar.login=$SONAR_TOKEN
+                              -Dsonar.projectKey="$SONAR_PROJECT_KEY" \
+                              -Dsonar.host.url="$SONAR_HOST_URL" \
+                              -Dsonar.login="$SONAR_TOKEN"
                         '''
                     }
                 }
@@ -120,7 +139,7 @@ spec:
                     sh '''
                         set -eu
                         cd "$WORK_DIR"
-                        docker build -t $IMAGE_REPO:$IMAGE_TAG -t $IMAGE_REPO:latest .
+                        docker build -t "$IMAGE_REPO:$IMAGE_TAG" -t "$IMAGE_REPO:latest" .
                     '''
                 }
             }
@@ -133,8 +152,8 @@ spec:
                         sh '''
                             set -eu
                             echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                            docker push $IMAGE_REPO:$IMAGE_TAG
-                            docker push $IMAGE_REPO:latest
+                            docker push "$IMAGE_REPO:$IMAGE_TAG"
+                            docker push "$IMAGE_REPO:latest"
                         '''
                     }
                 }
@@ -146,6 +165,7 @@ spec:
                 container('trivy') {
                     sh '''
                         set -eu
+
                         mkdir -p /root/.cache/trivy
 
                         echo 'Downloading Trivy vulnerability DB...'
@@ -170,7 +190,7 @@ spec:
                           --format table \
                           --no-progress \
                           --scanners vuln \
-                          $IMAGE_REPO:$IMAGE_TAG
+                          "$IMAGE_REPO:$IMAGE_TAG"
 
                         echo 'Running Trivy CRITICAL gate (OS vulnerabilities only)...'
                         trivy image \
@@ -185,7 +205,7 @@ spec:
                           --output trivy-report.json \
                           --no-progress \
                           --scanners vuln \
-                          $IMAGE_REPO:$IMAGE_TAG
+                          "$IMAGE_REPO:$IMAGE_TAG"
                     '''
                 }
             }
@@ -201,7 +221,7 @@ spec:
 
         stage('Update GitOps Repo') {
             steps {
-                container('maven') {
+                container('git') {
                     withCredentials([string(credentialsId: 'git-token', variable: 'GIT_TOKEN')]) {
                         sh '''
                             set -eu
@@ -211,20 +231,30 @@ spec:
                             git config --global user.name "Jenkins"
                             git config --global --add safe.directory "$WORK_DIR"
 
-                            if [ ! -f gitops/values.yaml ]; then
-                              echo "gitops/values.yaml not found"
+                            if [ ! -d .git ]; then
+                              echo "Git repository not found in $WORK_DIR"
                               exit 1
                             fi
 
-                            sed -i 's|tag:.*|tag: "'"$IMAGE_TAG"'"|' gitops/values.yaml
+                            if [ ! -f "$GITOPS_FILE" ]; then
+                              echo "$GITOPS_FILE not found"
+                              exit 1
+                            fi
 
-                            git add gitops/values.yaml
+                            git remote set-url origin "https://horla1:$GIT_TOKEN@$GIT_REPO_URL"
+
+                            sed -i 's|^[[:space:]]*tag:.*|tag: "'"$IMAGE_TAG"'"|' "$GITOPS_FILE"
+
+                            echo "Updated $GITOPS_FILE:"
+                            cat "$GITOPS_FILE"
+
+                            git add "$GITOPS_FILE"
 
                             if git diff --cached --quiet; then
                               echo "No GitOps changes to commit"
                             else
                               git commit -m "Update image tag to $IMAGE_TAG"
-                              git push https://horla1:$GIT_TOKEN@github.com/horla1/ola-cicd.git HEAD:main
+                              git push origin HEAD:$GIT_BRANCH
                             fi
                         '''
                     }
@@ -239,13 +269,13 @@ spec:
                         sh '''
                             set -eu
 
-                            argocd login $ARGOCD_SERVER \
+                            argocd login "$ARGOCD_SERVER" \
                               --username "$ARGOCD_USER" \
                               --password "$ARGOCD_PASS" \
                               --insecure
 
-                            argocd app sync $ARGOCD_APP --insecure
-                            argocd app wait $ARGOCD_APP --health --sync --timeout 300 --insecure
+                            argocd app sync "$ARGOCD_APP" --insecure
+                            argocd app wait "$ARGOCD_APP" --health --sync --timeout 300 --insecure
                         '''
                     }
                 }
