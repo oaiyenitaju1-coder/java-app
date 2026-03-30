@@ -132,6 +132,7 @@ pipeline {
                         helm upgrade --install my-release ./helm/java-app \
                             --set image.repository=horla1/java-app \
                             --set image.tag=latest \
+                            --set service.nodePort=30081 \
                             --kube-insecure-skip-tls-verify
                     '''
                 }
@@ -144,10 +145,12 @@ pipeline {
                     sh '''
                         export KUBECONFIG=${KUBECONFIG_FILE}
                         kubectl get pods --insecure-skip-tls-verify
+                        kubectl get svc --insecure-skip-tls-verify
                     '''
                 }
             }
         }
+
     }
 
     post {
