@@ -41,7 +41,7 @@ spec:
           mountPath: /var/run/docker.sock
 
     - name: argocd
-      image: argoproj/argocd:v2.12.6
+      image: quay.io/argoproj/argocd:v2.12.6
       command:
         - sh
         - -c
