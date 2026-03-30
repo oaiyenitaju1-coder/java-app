@@ -1,16 +1,12 @@
 pipeline {
     agent {
         kubernetes {
-            label 'java-cicd-pod'
+            label 'java-cicd'
             defaultContainer 'maven'
             yaml """
 apiVersion: v1
 kind: Pod
-metadata:
-  labels:
-    app: java-cicd
 spec:
-  serviceAccountName: jenkins
   containers:
     - name: maven
       image: maven:3.9.6-eclipse-temurin-17
@@ -22,7 +18,7 @@ spec:
           mountPath: /var/run/docker.sock
 
     - name: docker
-      image: docker:27.0.3-cli
+      image: docker:27.1.1-cli
       command:
         - cat
       tty: true
@@ -30,22 +26,9 @@ spec:
         - name: docker-sock
           mountPath: /var/run/docker.sock
 
-    - name: trivy
-      image: aquasec/trivy:0.57.1
+    - name: kubectl
+      image: quay.io/argoproj/argocd:v2.12.6
       command:
-        - sh
-        - -c
-        - cat
-      tty: true
-      volumeMounts:
-        - name: docker-sock
-          mountPath: /var/run/docker.sock
-
-    - name: argocd
-      image: quay.io/argoproj/argocd:v2.11.7
-      command:
-        - sh
-        - -c
         - cat
       tty: true
 
@@ -58,46 +41,45 @@ spec:
     }
 
     environment {
-        APP_NAME           = 'java-app'
-        IMAGE_REPO         = 'horla1/java-app'
-        IMAGE_TAG          = "${BUILD_NUMBER}"
-        SONAR_HOST_URL     = 'http://192.168.49.4:9000'
-        SONAR_PROJECT_KEY  = 'java-app'
-        ARGOCD_SERVER      = '192.168.49.4:8080'
-        ARGOCD_APP         = 'java-app'
-        WORK_DIR           = '/home/jenkins/agent/workspace/ola-cicd'
-        GITOPS_REPO_URL    = 'https://github.com/oaiyenitaju1-coder/java-app.git'
+        APP_NAME = 'java-app'
+        DOCKER_IMAGE = 'horla1/java-app'
+        DOCKER_TAG = "${BUILD_NUMBER}"
+        SONAR_PROJECT_KEY = 'java-app'
+        SONAR_HOST_URL = 'http://192.168.49.4:9000'
+        GITOPS_FILE = 'gitops/values.yaml'
+
+        // Change this if Jenkins cannot reach Argo CD on localhost
+        ARGOCD_SERVER = 'localhost:8080'
+        ARGOCD_APP = 'java-app'
     }
 
     options {
         timestamps()
-        disableConcurrentBuilds()
-        buildDiscarder(logRotator(numToKeepStr: '20'))
     }
 
     stages {
-
         stage('Checkout') {
             steps {
-                checkout scm
-                sh 'pwd && ls -la'
+                container('maven') {
+                    checkout scm
+                }
             }
         }
 
-        stage('Build & Unit Test') {
+        stage('Build & Test') {
             steps {
                 container('maven') {
                     sh '''
                         set -eu
-                        cd "$WORK_DIR"
+                        cd /home/jenkins/agent/workspace/${JOB_NAME}
                         mvn clean test package
                     '''
                 }
             }
             post {
                 always {
-                    junit testResults: '**/target/surefire-reports/*.xml', allowEmptyResults: true
-                    archiveArtifacts artifacts: 'target/*.jar', allowEmptyArchive: true
+                    junit 'target/surefire-reports/*.xml'
+                    archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
                 }
             }
         }
@@ -108,10 +90,10 @@ spec:
                     withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
                         sh '''
                             set -eu
-                            cd "$WORK_DIR"
+                            cd /home/jenkins/agent/workspace/${JOB_NAME}
                             mvn org.sonarsource.scanner.maven:sonar-maven-plugin:4.0.0.4121:sonar \
-                              -Dsonar.projectKey=$SONAR_PROJECT_KEY \
-                              -Dsonar.host.url=$SONAR_HOST_URL \
+                              -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                              -Dsonar.host.url=${SONAR_HOST_URL} \
                               -Dsonar.login=$SONAR_TOKEN
                         '''
                     }
@@ -124,8 +106,8 @@ spec:
                 container('docker') {
                     sh '''
                         set -eu
-                        cd "$WORK_DIR"
-                        docker build -t $IMAGE_REPO:$IMAGE_TAG -t $IMAGE_REPO:latest .
+                        cd /home/jenkins/agent/workspace/${JOB_NAME}
+                        docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} -t ${DOCKER_IMAGE}:latest .
                     '''
                 }
             }
@@ -134,12 +116,12 @@ spec:
         stage('Push Docker Image') {
             steps {
                 container('docker') {
-                    withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    withCredentials([usernamePassword(credentialsId: 'docker-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                         sh '''
                             set -eu
                             echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                            docker push $IMAGE_REPO:$IMAGE_TAG
-                            docker push $IMAGE_REPO:latest
+                            docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
+                            docker push ${DOCKER_IMAGE}:latest
                         '''
                     }
                 }
@@ -148,22 +130,22 @@ spec:
 
         stage('Trivy Security Scan') {
             steps {
-                container('trivy') {
+                container('docker') {
                     sh '''
                         set -eu
                         mkdir -p /root/.cache/trivy
 
-                        echo 'Downloading Trivy vulnerability DB...'
+                        echo "Downloading Trivy vulnerability DB..."
                         n=0
                         until [ "$n" -ge 3 ]
                         do
                           trivy image --cache-dir /root/.cache/trivy --timeout 15m --download-db-only && break
                           n=$((n+1))
-                          echo "Retrying Trivy DB download... attempt $((n+1))"
+                          echo "Retrying Trivy DB download..."
                           sleep 10
                         done
 
-                        echo 'Running Trivy report scan (OS vulnerabilities only)...'
+                        echo "Running Trivy report scan (OS vulnerabilities only)..."
                         trivy image \
                           --cache-dir /root/.cache/trivy \
                           --timeout 15m \
@@ -175,9 +157,9 @@ spec:
                           --format table \
                           --no-progress \
                           --scanners vuln \
-                          $IMAGE_REPO:$IMAGE_TAG
+                          ${DOCKER_IMAGE}:${DOCKER_TAG}
 
-                        echo 'Running Trivy CRITICAL gate (OS vulnerabilities only)...'
+                        echo "Running Trivy CRITICAL gate (OS vulnerabilities only)..."
                         trivy image \
                           --cache-dir /root/.cache/trivy \
                           --timeout 15m \
@@ -190,16 +172,13 @@ spec:
                           --output trivy-report.json \
                           --no-progress \
                           --scanners vuln \
-                          $IMAGE_REPO:$IMAGE_TAG
+                          ${DOCKER_IMAGE}:${DOCKER_TAG}
                     '''
                 }
             }
             post {
                 always {
-                    archiveArtifacts artifacts: 'trivy-report.json', allowEmptyArchive: true
-                }
-                failure {
-                    echo '❌ Trivy scan failed or CRITICAL OS vulnerabilities were found — deploy blocked!'
+                    archiveArtifacts artifacts: 'trivy-report.json', fingerprint: true, allowEmptyArchive: true
                 }
             }
         }
@@ -207,29 +186,29 @@ spec:
         stage('Update GitOps Repo') {
             steps {
                 container('maven') {
-                    withCredentials([usernamePassword(credentialsId: 'github-creds', usernameVariable: 'GITHUB_USER', passwordVariable: 'GITHUB_TOKEN')]) {
+                    withCredentials([usernamePassword(credentialsId: 'github-creds', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_TOKEN')]) {
                         sh '''
                             set -eu
-                            cd "$WORK_DIR"
+                            cd /home/jenkins/agent/workspace/${JOB_NAME}
 
                             git config --global user.email "jenkins@ci.local"
                             git config --global user.name "Jenkins"
-                            git config --global --add safe.directory "$WORK_DIR"
+                            git config --global --add safe.directory /home/jenkins/agent/workspace/${JOB_NAME}
 
-                            if [ ! -f gitops/values.yaml ]; then
-                              echo "gitops/values.yaml not found"
+                            if [ ! -f "${GITOPS_FILE}" ]; then
+                              echo "ERROR: ${GITOPS_FILE} not found"
                               exit 1
                             fi
 
-                            sed -i 's|tag:.*|tag: "'"$IMAGE_TAG"'"|' gitops/values.yaml
+                            sed -i 's|tag:.*|tag: "'"${DOCKER_TAG}"'"|' ${GITOPS_FILE}
 
-                            git add gitops/values.yaml
+                            git add ${GITOPS_FILE}
 
                             if git diff --cached --quiet; then
-                              echo "No GitOps changes to commit"
+                              echo "No changes to commit"
                             else
-                              git commit -m "Update image tag to $IMAGE_TAG"
-                              git push https://$GITHUB_USER:$GITHUB_TOKEN@github.com/oaiyenitaju1-coder/java-app.git HEAD:main
+                              git commit -m "Update image tag to ${DOCKER_TAG}"
+                              git push https://${GIT_USER}:${GIT_TOKEN}@github.com/oaiyenitaju1-coder/java-app.git HEAD:main
                             fi
                         '''
                     }
@@ -239,18 +218,24 @@ spec:
 
         stage('Verify Argo CD Sync') {
             steps {
-                container('argocd') {
-                    withCredentials([usernamePassword(credentialsId: 'argocd-creds', usernameVariable: 'ARGOCD_USER', passwordVariable: 'ARGOCD_PASS')]) {
+                container('kubectl') {
+                    withCredentials([string(credentialsId: 'argocd-creds', variable: 'ARGOCD_TOKEN')]) {
                         sh '''
                             set -eu
 
-                            argocd login $ARGOCD_SERVER \
-                              --username "$ARGOCD_USER" \
-                              --password "$ARGOCD_PASS" \
-                              --insecure
+                            echo "Syncing Argo CD application..."
+                            argocd app sync ${ARGOCD_APP} \
+                              --server ${ARGOCD_SERVER} \
+                              --insecure \
+                              --auth-token $ARGOCD_TOKEN
 
-                            argocd app sync $ARGOCD_APP --insecure
-                            argocd app wait $ARGOCD_APP --health --sync --timeout 300 --insecure
+                            echo "Waiting for Argo CD application to become healthy..."
+                            argocd app wait ${ARGOCD_APP} \
+                              --server ${ARGOCD_SERVER} \
+                              --insecure \
+                              --auth-token $ARGOCD_TOKEN \
+                              --health \
+                              --timeout 300
                         '''
                     }
                 }
@@ -260,17 +245,13 @@ spec:
 
     post {
         success {
-            echo "✅ Pipeline completed successfully. Image: ${IMAGE_REPO}:${IMAGE_TAG}"
+            echo '✅ Pipeline completed successfully!'
         }
         failure {
             echo '❌ Pipeline failed!'
         }
         always {
-            script {
-                if (getContext(hudson.FilePath)) {
-                    cleanWs(deleteDirs: true, notFailBuild: true)
-                }
-            }
+            cleanWs()
         }
     }
 }
