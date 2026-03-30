@@ -1,16 +1,21 @@
 pipeline {
     agent {
         kubernetes {
+            label 'java-cicd-pod'
             defaultContainer 'maven'
             yaml """
 apiVersion: v1
 kind: Pod
+metadata:
+  labels:
+    app: java-cicd
 spec:
   serviceAccountName: jenkins
   containers:
     - name: maven
       image: maven:3.9.6-eclipse-temurin-17
-      command: ['cat']
+      command:
+        - cat
       tty: true
       volumeMounts:
         - name: docker-sock
@@ -18,7 +23,8 @@ spec:
 
     - name: docker
       image: docker:27.0.3-cli
-      command: ['cat']
+      command:
+        - cat
       tty: true
       volumeMounts:
         - name: docker-sock
@@ -26,15 +32,21 @@ spec:
 
     - name: trivy
       image: aquasec/trivy:0.57.1
-      command: ['sh', '-c', 'cat']
+      command:
+        - sh
+        - -c
+        - cat
       tty: true
       volumeMounts:
         - name: docker-sock
           mountPath: /var/run/docker.sock
 
     - name: argocd
-      image: quay.io/argoproj/argocd:latest
-      command: ['sh', '-c', 'cat']
+      image: quay.io/argoproj/argocd:v2.11.7
+      command:
+        - sh
+        - -c
+        - cat
       tty: true
 
   volumes:
@@ -46,14 +58,15 @@ spec:
     }
 
     environment {
-        APP_NAME          = 'java-app'
-        IMAGE_REPO        = 'horla1/java-app'
-        IMAGE_TAG         = "${BUILD_NUMBER}"
-        SONAR_HOST_URL    = 'http://192.168.49.4:9000'
-        SONAR_PROJECT_KEY = 'java-app'
-        ARGOCD_SERVER     = '192.168.49.4:8080'
-        ARGOCD_APP        = 'java-app'
-        WORK_DIR          = "${WORKSPACE}"
+        APP_NAME           = 'java-app'
+        IMAGE_REPO         = 'horla1/java-app'
+        IMAGE_TAG          = "${BUILD_NUMBER}"
+        SONAR_HOST_URL     = 'http://192.168.49.4:9000'
+        SONAR_PROJECT_KEY  = 'java-app'
+        ARGOCD_SERVER      = '192.168.49.4:8080'
+        ARGOCD_APP         = 'java-app'
+        WORK_DIR           = '/home/jenkins/agent/workspace/ola-cicd'
+        GITOPS_REPO_URL    = 'https://github.com/oaiyenitaju1-coder/java-app.git'
     }
 
     options {
@@ -63,6 +76,7 @@ spec:
     }
 
     stages {
+
         stage('Checkout') {
             steps {
                 checkout scm
@@ -96,9 +110,9 @@ spec:
                             set -eu
                             cd "$WORK_DIR"
                             mvn org.sonarsource.scanner.maven:sonar-maven-plugin:4.0.0.4121:sonar \
-                              -Dsonar.projectKey="$SONAR_PROJECT_KEY" \
-                              -Dsonar.host.url="$SONAR_HOST_URL" \
-                              -Dsonar.login="$SONAR_TOKEN"
+                              -Dsonar.projectKey=$SONAR_PROJECT_KEY \
+                              -Dsonar.host.url=$SONAR_HOST_URL \
+                              -Dsonar.login=$SONAR_TOKEN
                         '''
                     }
                 }
@@ -111,7 +125,7 @@ spec:
                     sh '''
                         set -eu
                         cd "$WORK_DIR"
-                        docker build -t "$IMAGE_REPO:$IMAGE_TAG" -t "$IMAGE_REPO:latest" .
+                        docker build -t $IMAGE_REPO:$IMAGE_TAG -t $IMAGE_REPO:latest .
                     '''
                 }
             }
@@ -124,8 +138,8 @@ spec:
                         sh '''
                             set -eu
                             echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                            docker push "$IMAGE_REPO:$IMAGE_TAG"
-                            docker push "$IMAGE_REPO:latest"
+                            docker push $IMAGE_REPO:$IMAGE_TAG
+                            docker push $IMAGE_REPO:latest
                         '''
                     }
                 }
@@ -155,13 +169,13 @@ spec:
                           --timeout 15m \
                           --skip-db-update \
                           --skip-java-db-update \
-                          --vuln-type os \
+                          --pkg-types os \
                           --exit-code 0 \
                           --severity HIGH,CRITICAL \
                           --format table \
                           --no-progress \
                           --scanners vuln \
-                          "$IMAGE_REPO:$IMAGE_TAG"
+                          $IMAGE_REPO:$IMAGE_TAG
 
                         echo 'Running Trivy CRITICAL gate (OS vulnerabilities only)...'
                         trivy image \
@@ -169,14 +183,14 @@ spec:
                           --timeout 15m \
                           --skip-db-update \
                           --skip-java-db-update \
-                          --vuln-type os \
+                          --pkg-types os \
                           --exit-code 1 \
                           --severity CRITICAL \
                           --format json \
                           --output trivy-report.json \
                           --no-progress \
                           --scanners vuln \
-                          "$IMAGE_REPO:$IMAGE_TAG"
+                          $IMAGE_REPO:$IMAGE_TAG
                     '''
                 }
             }
@@ -215,7 +229,7 @@ spec:
                               echo "No GitOps changes to commit"
                             else
                               git commit -m "Update image tag to $IMAGE_TAG"
-                              git push "https://$GITHUB_USER:$GITHUB_TOKEN@github.com/horla1/ola-cicd.git" HEAD:main
+                              git push https://$GITHUB_USER:$GITHUB_TOKEN@github.com/oaiyenitaju1-coder/java-app.git HEAD:main
                             fi
                         '''
                     }
@@ -229,13 +243,14 @@ spec:
                     withCredentials([usernamePassword(credentialsId: 'argocd-creds', usernameVariable: 'ARGOCD_USER', passwordVariable: 'ARGOCD_PASS')]) {
                         sh '''
                             set -eu
-                            argocd login "$ARGOCD_SERVER" \
+
+                            argocd login $ARGOCD_SERVER \
                               --username "$ARGOCD_USER" \
                               --password "$ARGOCD_PASS" \
                               --insecure
 
-                            argocd app sync "$ARGOCD_APP" --insecure
-                            argocd app wait "$ARGOCD_APP" --health --sync --timeout 300 --insecure
+                            argocd app sync $ARGOCD_APP --insecure
+                            argocd app wait $ARGOCD_APP --health --sync --timeout 300 --insecure
                         '''
                     }
                 }
@@ -252,7 +267,7 @@ spec:
         }
         always {
             script {
-                if (env.WORKSPACE) {
+                if (getContext(hudson.FilePath)) {
                     cleanWs(deleteDirs: true, notFailBuild: true)
                 }
             }
