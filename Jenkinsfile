@@ -5,16 +5,12 @@ pipeline {
             yaml """
 apiVersion: v1
 kind: Pod
-metadata:
-  labels:
-    app: java-cicd
 spec:
   serviceAccountName: jenkins
   containers:
     - name: maven
       image: maven:3.9.6-eclipse-temurin-17
-      command:
-        - cat
+      command: ['cat']
       tty: true
       volumeMounts:
         - name: docker-sock
@@ -22,8 +18,7 @@ spec:
 
     - name: docker
       image: docker:27.0.3-cli
-      command:
-        - cat
+      command: ['cat']
       tty: true
       volumeMounts:
         - name: docker-sock
@@ -31,21 +26,15 @@ spec:
 
     - name: trivy
       image: aquasec/trivy:0.57.1
-      command:
-        - sh
-        - -c
-        - cat
+      command: ['sh', '-c', 'cat']
       tty: true
       volumeMounts:
         - name: docker-sock
           mountPath: /var/run/docker.sock
 
     - name: argocd
-      image: quay.io/argoproj/argocd:v2.12.6
-      command:
-        - sh
-        - -c
-        - cat
+      image: quay.io/argoproj/argocd:latest
+      command: ['sh', '-c', 'cat']
       tty: true
 
   volumes:
@@ -64,7 +53,7 @@ spec:
         SONAR_PROJECT_KEY = 'java-app'
         ARGOCD_SERVER     = '192.168.49.4:8080'
         ARGOCD_APP        = 'java-app'
-        WORK_DIR          = '/home/jenkins/agent/workspace/ola-cicd'
+        WORK_DIR          = "${WORKSPACE}"
     }
 
     options {
@@ -77,11 +66,7 @@ spec:
         stage('Checkout') {
             steps {
                 checkout scm
-                sh '''
-                    set -eu
-                    pwd
-                    ls -la
-                '''
+                sh 'pwd && ls -la'
             }
         }
 
@@ -110,7 +95,7 @@ spec:
                         sh '''
                             set -eu
                             cd "$WORK_DIR"
-                            mvn sonar:sonar \
+                            mvn org.sonarsource.scanner.maven:sonar-maven-plugin:4.0.0.4121:sonar \
                               -Dsonar.projectKey="$SONAR_PROJECT_KEY" \
                               -Dsonar.host.url="$SONAR_HOST_URL" \
                               -Dsonar.login="$SONAR_TOKEN"
@@ -208,7 +193,7 @@ spec:
         stage('Update GitOps Repo') {
             steps {
                 container('maven') {
-                    withCredentials([string(credentialsId: 'git-token', variable: 'GIT_TOKEN')]) {
+                    withCredentials([usernamePassword(credentialsId: 'github-creds', usernameVariable: 'GITHUB_USER', passwordVariable: 'GITHUB_TOKEN')]) {
                         sh '''
                             set -eu
                             cd "$WORK_DIR"
@@ -230,7 +215,7 @@ spec:
                               echo "No GitOps changes to commit"
                             else
                               git commit -m "Update image tag to $IMAGE_TAG"
-                              git push "https://horla1:$GIT_TOKEN@github.com/horla1/ola-cicd.git" HEAD:main
+                              git push "https://$GITHUB_USER:$GITHUB_TOKEN@github.com/horla1/ola-cicd.git" HEAD:main
                             fi
                         '''
                     }
@@ -267,7 +252,7 @@ spec:
         }
         always {
             script {
-                if (env.WORKSPACE?.trim()) {
+                if (env.WORKSPACE) {
                     cleanWs(deleteDirs: true, notFailBuild: true)
                 }
             }
