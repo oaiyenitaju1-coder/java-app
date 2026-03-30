@@ -217,20 +217,25 @@ pipeline {
 
         stage('Update GitOps Repo') {
             steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'github-creds',
-                    usernameVariable: 'GIT_USER',
-                    passwordVariable: 'GIT_TOKEN')]) {
-                    sh '''
-                        git config user.email "jenkins@ci.local"
-                        git config user.name "Jenkins"
+                container('maven') {
+                    withCredentials([usernamePassword(
+                        credentialsId: 'github-creds',
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_TOKEN')]) {
+                        sh '''
+                            set -eu
+                            cd "$WORKSPACE"
 
-                        sed -i 's|tag:.*|tag: "'"${BUILD_NUMBER}"'"|' gitops/values.yaml
+                            git config --global user.email "jenkins@ci.local"
+                            git config --global user.name "Jenkins"
 
-                        git add gitops/values.yaml
-                        git commit -m "ci: update image tag to ${BUILD_NUMBER} [skip ci]" || true
-                        git push https://$GIT_USER:$GIT_TOKEN@github.com/oaiyenitaju1-coder/java-app.git main
-                    '''
+                            sed -i 's|tag:.*|tag: "'"${BUILD_NUMBER}"'"|' gitops/values.yaml
+
+                            git add gitops/values.yaml
+                            git commit -m "ci: update image tag to ${BUILD_NUMBER} [skip ci]" || true
+                            git push https://$GIT_USER:$GIT_TOKEN@github.com/oaiyenitaju1-coder/java-app.git HEAD:main
+                        '''
+                    }
                 }
             }
         }
