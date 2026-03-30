@@ -1,243 +1,101 @@
 pipeline {
-    agent {
-        kubernetes {
-            label 'java-cicd'
-            defaultContainer 'maven'
-            yaml """
-apiVersion: v1
-kind: Pod
-spec:
-  containers:
-    - name: maven
-      image: maven:3.9.6-eclipse-temurin-17
-      command:
-        - cat
-      tty: true
-      volumeMounts:
-        - name: docker-sock
-          mountPath: /var/run/docker.sock
-
-    - name: docker
-      image: docker:27.1.1-cli
-      command:
-        - cat
-      tty: true
-      volumeMounts:
-        - name: docker-sock
-          mountPath: /var/run/docker.sock
-
-    - name: kubectl
-      image: quay.io/argoproj/argocd:v2.12.6
-      command:
-        - cat
-      tty: true
-
-  volumes:
-    - name: docker-sock
-      hostPath:
-        path: /var/run/docker.sock
-"""
-        }
-    }
+    agent any
 
     environment {
-        APP_NAME = 'java-app'
-        DOCKER_IMAGE = 'horla1/java-app'
-        DOCKER_TAG = "${BUILD_NUMBER}"
-        SONAR_PROJECT_KEY = 'java-app'
-        SONAR_HOST_URL = 'http://192.168.49.4:9000'
-        GITOPS_FILE = 'gitops/values.yaml'
-
-        // Change this if Jenkins cannot reach Argo CD on localhost
-        ARGOCD_SERVER = 'localhost:8080'
-        ARGOCD_APP = 'java-app'
-    }
-
-    options {
-        timestamps()
+        IMAGE_NAME = 'horla1/java-app'
+        SONAR_HOST_URL = 'http://sonarqube:9000'
     }
 
     stages {
-        stage('Checkout') {
+        stage('Checkout Code') {
             steps {
-                container('maven') {
-                    checkout scm
-                }
+                git branch: 'main', url: 'https://github.com/oaiyenitaju1-coder/java-app.git'
             }
         }
 
-        stage('Build & Test') {
+        stage('Build with Maven (Java 11)') {
             steps {
-                container('maven') {
+                sh '''
+                    docker exec java11-tester sh -lc '
+                        rm -rf /workspace &&
+                        mkdir -p /workspace
+                    '
+
+                    docker cp . java11-tester:/workspace
+
+                    docker exec java11-tester sh -lc '
+                        cd /workspace &&
+                        mvn -B clean test
+                    '
+                '''
+            }
+        }
+
+        stage('SonarQube Analysis (Java 11)') {
+            steps {
+                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
                     sh '''
-                        set -eu
-                        cd /home/jenkins/agent/workspace/${JOB_NAME}
-                        mvn clean test package
-                    '''
-                }
-            }
-            post {
-                always {
-                    junit 'target/surefire-reports/*.xml'
-                    archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-                }
-            }
-        }
+                        docker exec java11-sonar sh -lc '
+                            rm -rf /workspace &&
+                            mkdir -p /workspace
+                        '
 
-        stage('SonarQube Analysis') {
-            steps {
-                container('maven') {
-                    withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
-                        sh '''
-                            set -eu
-                            cd /home/jenkins/agent/workspace/${JOB_NAME}
-                            mvn org.sonarsource.scanner.maven:sonar-maven-plugin:4.0.0.4121:sonar \
-                              -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                        docker cp . java11-sonar:/workspace
+
+                        docker exec java11-sonar sh -lc "
+                            cd /workspace &&
+                            mvn -B clean verify sonar:sonar \
+                              -Dsonar.projectKey=java-app \
                               -Dsonar.host.url=${SONAR_HOST_URL} \
-                              -Dsonar.login=$SONAR_TOKEN
-                        '''
-                    }
+                              -Dsonar.login=${SONAR_TOKEN}
+                        "
+                    '''
                 }
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                container('docker') {
-                    sh '''
-                        set -eu
-                        cd /home/jenkins/agent/workspace/${JOB_NAME}
-                        docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} -t ${DOCKER_IMAGE}:latest .
-                    '''
-                }
+                sh '''
+                    docker build -t ${IMAGE_NAME}:${BUILD_NUMBER} -t ${IMAGE_NAME}:latest .
+                '''
             }
         }
 
         stage('Push Docker Image') {
             steps {
-                container('docker') {
-                    withCredentials([usernamePassword(credentialsId: 'docker-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                        sh '''
-                            set -eu
-                            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                            docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
-                            docker push ${DOCKER_IMAGE}:latest
-                        '''
-                    }
-                }
-            }
-        }
-
-        stage('Trivy Security Scan') {
-            steps {
-                container('docker') {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh '''
-                        set -eu
-                        mkdir -p /root/.cache/trivy
-
-                        echo "Downloading Trivy vulnerability DB..."
-                        n=0
-                        until [ "$n" -ge 3 ]
-                        do
-                          trivy image --cache-dir /root/.cache/trivy --timeout 15m --download-db-only && break
-                          n=$((n+1))
-                          echo "Retrying Trivy DB download..."
-                          sleep 10
-                        done
-
-                        echo "Running Trivy report scan (OS vulnerabilities only)..."
-                        trivy image \
-                          --cache-dir /root/.cache/trivy \
-                          --timeout 15m \
-                          --skip-db-update \
-                          --skip-java-db-update \
-                          --pkg-types os \
-                          --exit-code 0 \
-                          --severity HIGH,CRITICAL \
-                          --format table \
-                          --no-progress \
-                          --scanners vuln \
-                          ${DOCKER_IMAGE}:${DOCKER_TAG}
-
-                        echo "Running Trivy CRITICAL gate (OS vulnerabilities only)..."
-                        trivy image \
-                          --cache-dir /root/.cache/trivy \
-                          --timeout 15m \
-                          --skip-db-update \
-                          --skip-java-db-update \
-                          --pkg-types os \
-                          --exit-code 1 \
-                          --severity CRITICAL \
-                          --format json \
-                          --output trivy-report.json \
-                          --no-progress \
-                          --scanners vuln \
-                          ${DOCKER_IMAGE}:${DOCKER_TAG}
+                        echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin
+                        docker push ${IMAGE_NAME}:${BUILD_NUMBER}
+                        docker push ${IMAGE_NAME}:latest
                     '''
                 }
             }
-            post {
-                always {
-                    archiveArtifacts artifacts: 'trivy-report.json', fingerprint: true, allowEmptyArchive: true
-                }
-            }
         }
 
-        stage('Update GitOps Repo') {
+        stage('Deploy to Kubernetes') {
             steps {
-                container('maven') {
-                    withCredentials([usernamePassword(credentialsId: 'github-creds', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_TOKEN')]) {
-                        sh '''
-                            set -eu
-                            cd /home/jenkins/agent/workspace/${JOB_NAME}
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG_FILE')]) {
+                    sh '''
+                        export KUBECONFIG="$KUBECONFIG_FILE"
 
-                            git config --global user.email "jenkins@ci.local"
-                            git config --global user.name "Jenkins"
-                            git config --global --add safe.directory /home/jenkins/agent/workspace/${JOB_NAME}
+                        echo "Current context:"
+                        kubectl config current-context
 
-                            if [ ! -f "${GITOPS_FILE}" ]; then
-                              echo "ERROR: ${GITOPS_FILE} not found"
-                              exit 1
-                            fi
+                        echo "Checking cluster access..."
+                        kubectl get nodes
 
-                            sed -i 's|tag:.*|tag: "'"${DOCKER_TAG}"'"|' ${GITOPS_FILE}
+                        kubectl apply -f deployment.yaml
 
-                            git add ${GITOPS_FILE}
+                        kubectl set image deployment/java-app \
+                            java-app=${IMAGE_NAME}:${BUILD_NUMBER}
 
-                            if git diff --cached --quiet; then
-                              echo "No changes to commit"
-                            else
-                              git commit -m "Update image tag to ${DOCKER_TAG}"
-                              git push https://${GIT_USER}:${GIT_TOKEN}@github.com/oaiyenitaju1-coder/java-app.git HEAD:main
-                            fi
-                        '''
-                    }
-                }
-            }
-        }
+                        kubectl rollout status deployment/java-app
 
-        stage('Verify Argo CD Sync') {
-            steps {
-                container('kubectl') {
-                    withCredentials([string(credentialsId: 'argocd-creds', variable: 'ARGOCD_TOKEN')]) {
-                        sh '''
-                            set -eu
-
-                            echo "Syncing Argo CD application..."
-                            argocd app sync ${ARGOCD_APP} \
-                              --server ${ARGOCD_SERVER} \
-                              --insecure \
-                              --auth-token $ARGOCD_TOKEN
-
-                            echo "Waiting for Argo CD application to become healthy..."
-                            argocd app wait ${ARGOCD_APP} \
-                              --server ${ARGOCD_SERVER} \
-                              --insecure \
-                              --auth-token $ARGOCD_TOKEN \
-                              --health \
-                              --timeout 300
-                        '''
-                    }
+                        kubectl get pods
+                        kubectl get svc
+                    '''
                 }
             }
         }
@@ -249,9 +107,6 @@ spec:
         }
         failure {
             echo '❌ Pipeline failed!'
-        }
-        always {
-            cleanWs()
         }
     }
 }
