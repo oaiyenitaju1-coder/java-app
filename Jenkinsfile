@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_IMAGE = 'your-dockerhub-username/cicd-hello-world:latest'
+        DOCKER_IMAGE = 'horla1/java-app:latest'
         SONAR_HOST = 'http://sonarqube:9000'
         DOCKER_USERNAME = credentials('dockerhub-creds')
         DOCKER_PASSWORD = credentials('dockerhub-creds')
@@ -122,14 +122,15 @@ pipeline {
             agent {
                 docker {
                     image 'alpine/helm:latest'
-                    args "-v /var/run/docker.sock:/var/run/docker.sock --entrypoint=''"
+                    args "--entrypoint=''"
                 }
             }
             steps {
                 withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG_FILE')]) {
                     sh '''
                         export KUBECONFIG=${KUBECONFIG_FILE}
-                        helm upgrade --install my-release ./helm/hello-world \
+                        helm upgrade --install my-release ./helm/java-app \
+                            --set image.repository=horla1/java-app \
                             --set image.tag=latest \
                             --kube-insecure-skip-tls-verify
                     '''
@@ -147,7 +148,6 @@ pipeline {
                 }
             }
         }
-
     }
 
     post {
