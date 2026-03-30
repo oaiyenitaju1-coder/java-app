@@ -92,8 +92,17 @@ pipeline {
                 }
             }
             steps {
-                script {
-                    sh "trivy image --cache-dir .trivycache --severity HIGH,CRITICAL horla1/java-app:latest"
+                retry(3) {
+                    sh '''
+                        trivy image \
+                          --db-repository ghcr.io/aquasecurity/trivy-db:2 \
+                          --java-db-repository ghcr.io/aquasecurity/trivy-java-db:1 \
+                          --cache-dir .trivycache \
+                          --timeout 20m \
+                          --scanners vuln \
+                          --severity HIGH,CRITICAL \
+                          horla1/java-app:latest
+                    '''
                 }
             }
         }
