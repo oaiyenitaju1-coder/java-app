@@ -64,9 +64,7 @@ spec:
         SONAR_PROJECT_KEY = 'java-app'
         ARGOCD_SERVER     = '192.168.49.4:8080'
         ARGOCD_APP        = 'java-app'
-        WORK_DIR          = "${WORKSPACE}"
-        GITOPS_REPO       = 'https://github.com/horla1/ola-cicd.git'
-        GITOPS_BRANCH     = 'main'
+        WORK_DIR          = '/home/jenkins/agent/workspace/ola-cicd'
     }
 
     options {
@@ -156,7 +154,7 @@ spec:
                         set -eu
                         mkdir -p /root/.cache/trivy
 
-                        echo "Downloading Trivy vulnerability DB..."
+                        echo 'Downloading Trivy vulnerability DB...'
                         n=0
                         until [ "$n" -ge 3 ]
                         do
@@ -166,7 +164,7 @@ spec:
                           sleep 10
                         done
 
-                        echo "Running Trivy report scan (OS vulnerabilities only)..."
+                        echo 'Running Trivy report scan (OS vulnerabilities only)...'
                         trivy image \
                           --cache-dir /root/.cache/trivy \
                           --timeout 15m \
@@ -180,7 +178,7 @@ spec:
                           --scanners vuln \
                           "$IMAGE_REPO:$IMAGE_TAG"
 
-                        echo "Running Trivy CRITICAL gate (OS vulnerabilities only)..."
+                        echo 'Running Trivy CRITICAL gate (OS vulnerabilities only)...'
                         trivy image \
                           --cache-dir /root/.cache/trivy \
                           --timeout 15m \
@@ -232,7 +230,7 @@ spec:
                               echo "No GitOps changes to commit"
                             else
                               git commit -m "Update image tag to $IMAGE_TAG"
-                              git push "https://horla1:$GIT_TOKEN@github.com/horla1/ola-cicd.git" HEAD:$GITOPS_BRANCH
+                              git push "https://horla1:$GIT_TOKEN@github.com/horla1/ola-cicd.git" HEAD:main
                             fi
                         '''
                     }
@@ -246,7 +244,6 @@ spec:
                     withCredentials([usernamePassword(credentialsId: 'argocd-creds', usernameVariable: 'ARGOCD_USER', passwordVariable: 'ARGOCD_PASS')]) {
                         sh '''
                             set -eu
-
                             argocd login "$ARGOCD_SERVER" \
                               --username "$ARGOCD_USER" \
                               --password "$ARGOCD_PASS" \
@@ -270,10 +267,8 @@ spec:
         }
         always {
             script {
-                if (getContext(hudson.FilePath)) {
+                if (env.WORKSPACE?.trim()) {
                     cleanWs(deleteDirs: true, notFailBuild: true)
-                } else {
-                    echo 'No workspace available, skipping cleanWs.'
                 }
             }
         }
