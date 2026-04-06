@@ -151,6 +151,55 @@ pipeline {
             }
         }
 
+        stage('Update GitOps Repo') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'github-creds', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_TOKEN')]) {
+                    sh '''
+                        git config user.email "jenkins@ci.local"
+                        git config user.name "Jenkins"
+
+                        sed -i 's|tag:.*|tag: "latest"|' gitops/values.yaml
+
+                        git add gitops/values.yaml
+                        git diff --cached --quiet && echo "No changes to commit" && exit 0
+
+                        git commit -m "ci: update image tag to latest [skip ci]"
+                        git push https://${GIT_USER}:${GIT_TOKEN}@github.com/oaiyenitaju1-coder/java-app.git main
+                    '''
+                }
+            }
+        }
+
+        stage('Argo CD Sync') {
+            agent {
+                docker {
+                    image 'quay.io/argoproj/argocd:v2.12.6'
+                    args "--entrypoint=''"
+                }
+            }
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'argocd-creds', usernameVariable: 'ARGOCD_USER', passwordVariable: 'ARGOCD_PASS')]) {
+                    sh '''
+                        argocd login 192.168.49.2:8080 \
+                          --username "$ARGOCD_USER" \
+                          --password "$ARGOCD_PASS" \
+                          --insecure
+
+                        argocd app sync java-app --insecure
+
+                        argocd app wait java-app \
+                          --health \
+                          --sync \
+                          --timeout 300 \
+                          --insecure
+
+                        echo "✅ Argo CD sync complete"
+                        argocd app get java-app --insecure
+                    '''
+                }
+            }
+        }
+
     }
 
     post {
