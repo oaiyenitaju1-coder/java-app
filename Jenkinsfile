@@ -2,8 +2,10 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = 'horla1/java-app:latest'
+        DOCKER_IMAGE = 'horla1/java-app:latest'
         SONAR_HOST = 'http://sonarqube:9000'
+        DOCKER_USERNAME = credentials('dockerhub-creds')
+        DOCKER_PASSWORD = credentials('dockerhub-creds')
     }
 
     stages {
@@ -24,9 +26,7 @@ pipeline {
                         rm -rf /app &&
                         mkdir -p /app
                     "
-
                     docker cp . java17-builder:/app
-
                     docker exec java17-builder bash -c "
                         cd /app &&
                         ./mvnw clean package -DskipTests || mvn clean package -DskipTests
@@ -44,9 +44,7 @@ pipeline {
                         rm -rf /app &&
                         mkdir -p /app
                     "
-
                     docker cp . java11-tester:/app
-
                     docker exec java11-tester bash -c "
                         cd /app &&
                         ./mvnw test || mvn test
@@ -66,9 +64,7 @@ pipeline {
                             rm -rf /app &&
                             mkdir -p /app
                         "
-
                         docker cp . java11-tester:/app
-
                         docker exec java11-tester bash -c "
                             cd /app &&
                             mvn org.sonarsource.scanner.maven:sonar-maven-plugin:4.0.0.4121:sonar \
@@ -83,7 +79,7 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 sh '''
-                    docker build -t ${IMAGE_NAME} .
+                    docker build -t horla1/java-app:latest .
                 '''
             }
         }
@@ -98,14 +94,14 @@ pipeline {
             steps {
                 retry(3) {
                     sh '''
-                      trivy image \
-                        --db-repository ghcr.io/aquasecurity/trivy-db:2 \
-                        --java-db-repository ghcr.io/aquasecurity/trivy-java-db:1 \
-                        --cache-dir .trivycache \
-                        --timeout 20m \
-                        --scanners vuln \
-                        --severity HIGH,CRITICAL \
-                        $IMAGE_NAME
+                        trivy image \
+                          --db-repository ghcr.io/aquasecurity/trivy-db:2 \
+                          --java-db-repository ghcr.io/aquasecurity/trivy-java-db:1 \
+                          --cache-dir .trivycache \
+                          --timeout 20m \
+                          --scanners vuln \
+                          --severity HIGH,CRITICAL \
+                          horla1/java-app:latest
                     '''
                 }
             }
@@ -116,7 +112,7 @@ pipeline {
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh '''
                         echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin
-                        docker push ${IMAGE_NAME}
+                        docker push horla1/java-app:latest
                     '''
                 }
             }
@@ -126,7 +122,7 @@ pipeline {
             agent {
                 docker {
                     image 'alpine/helm:latest'
-                    args "-v /var/run/docker.sock:/var/run/docker.sock --entrypoint=''"
+                    args "--entrypoint=''"
                 }
             }
             steps {
@@ -143,26 +139,6 @@ pipeline {
             }
         }
 
-        stage('Deploy with Argo CD') {
-            agent {
-                docker {
-                    image 'quay.io/argoproj/argocd:latest'
-                    args "--entrypoint=''"
-                }
-            }
-            steps {
-                withCredentials([string(credentialsId: 'argocd-creds', variable: 'ARGOCD_AUTH_TOKEN')]) {
-                    sh '''
-                        argocd login host.docker.internal:30008 \
-                            --auth-token $ARGOCD_AUTH_TOKEN \
-                            --insecure
-
-                        argocd app sync java-app
-                    '''
-                }
-            }
-        }
-
         stage('Check Pods') {
             steps {
                 withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG_FILE')]) {
@@ -174,6 +150,7 @@ pipeline {
                 }
             }
         }
+
     }
 
     post {
@@ -185,3 +162,4 @@ pipeline {
         }
     }
 }
+
